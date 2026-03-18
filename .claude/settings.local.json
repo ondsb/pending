@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__google-workspace__drive_read_file",
+      "mcp__google-workspace__drive_get_file",
+      "mcp__google-workspace__drive_search_files",
+      "mcp__google-workspace__get_user_email"
+    ]
+  }
+}

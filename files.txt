@@ -1,0 +1,10 @@
+ba2e1719-6078-4dfb-8f87-7fc93b530951.csv
+per bettor, sport and market: pnl, margin, stake, average odds_after_10 / 30 / 90 values, rejected stake, rejected pnl
+afb9b31b-8127-48c0-8454-7e6712f3bffb.csv
+ Rejected Tickets by Bettor/Sport/Market/Reject Reason
+0d396ecc-4719-472e-a5bd-2ec0f1b8e4c7.csv
+PnL by Bettor/OTS Risk Tier
+adba3175-c0be-4ed7-a30d-0b6753f59b1c.csv
+ Mean Stake Size per Bettor
+ 81833cb9-ecaf-4e24-873b-bad30a69a898.csv
+ All ticket by ticket data (large)

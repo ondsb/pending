@@ -1,0 +1,26 @@
+[project]
+name = "pending-delay"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3",
+    "duckdb",
+    "lightgbm",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pydantic",
+    "pydantic-settings",
+    "pyarrow",
+    "scikit-learn",
+    "streamlit",
+    "boto3-stubs~=1.42.69",
+]
+
+[project.scripts]
+train = "pending_delay.model.train:main"
+calibrate = "pending_delay.model.calibrate:main"
+ope = "pending_delay.evaluation.ope:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
