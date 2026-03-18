@@ -55,15 +55,65 @@ class SplitConfig(BaseSettings):
     # test_frac = 1 - train_frac - val_frac = 0.15
 
 
+class FeatureConfig(BaseSettings):
+    """Specify which features to use for training.
+
+    Set `features` to a list of column names. If empty/None, uses all
+    available numeric + categorical columns (minus leaked/metadata).
+    """
+
+    features: list[str] = [
+        # Aggregate bettor-level (strongest signal)
+        "bs_avg_odds_after_10",
+        "avg_rejected_odds_after_10",
+        "bs_avg_odds_after_30",
+        "avg_rejected_odds_after_30",
+        "bs_avg_odds_after_90",
+        "avg_rejected_odds_after_90",
+        "bs_stake",
+        "bs_pnl",
+        "bs_margin",
+        "bs_rejected_stake",
+        "bs_rejected_pnl",
+        "total_rejected_stake",
+        "total_rejected_pnl",
+        "risk_tier_total_pnl",
+        "risk_tier_avg_margin",
+        "risk_tier_total_volume",
+        "mean_stake_size",
+        "n_reject_reasons",
+        "dominant_risk_tier",
+        # Ticket-level
+        "selection_odds",
+        "stake",
+        "pending_delay",
+        "market_name",
+        "market_selection",
+        "sport",
+        "sport_id",
+        "tournament_id",
+        "client_id",
+        "ots_risk_tier_id",
+        "market_type_id",
+        "bos",
+        # Engineered
+        "stake_ratio",
+        "odds_bucket",
+    ]
+    target: str = "odds_after_10"
+    categoricals: list[str] = ["market_name", "market_selection", "sport", "odds_bucket"]
+
+
 class Settings(BaseSettings):
     project_root: Path = Path(__file__).resolve().parent.parent.parent
-    data_dir: Path = Field(default=None)
-    model_dir: Path = Field(default=None)
+    data_dir: Path | None = Field(default=None)
+    model_dir: Path | None = Field(default=None)
 
     s3: S3Config = S3Config()
     model: ModelConfig = ModelConfig()
     thresholds: ThresholdConfig = ThresholdConfig()
     split: SplitConfig = SplitConfig()
+    feature: FeatureConfig = FeatureConfig()
 
     def model_post_init(self, __context):
         if self.data_dir is None:

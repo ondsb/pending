@@ -1,29 +1,13 @@
-"""
-Build training dataset from merged parquet (local or S3).
-
-This script is now a thin wrapper: the real feature engineering lives in
-src/pending_delay/features/. This script handles loading the merged parquet
-and running the full pipeline: train → calibrate → OPE.
-
-Usage:
-    # Train on local subset data:
-    python build_dataset.py --data data/tickets.parquet
-
-    # Full pipeline (train + calibrate + OPE):
-    python build_dataset.py --data data/tickets.parquet --full
-
-    # Just inspect the data:
-    python build_dataset.py --data data/tickets.parquet --inspect
-"""
+"""Pipeline runner: inspect data, train, calibrate, and run OPE."""
 
 import argparse
 import logging
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from pending_delay.config import settings
-from pending_delay.features.target import add_target
 from pending_delay.schema import TARGET_COL
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -31,46 +15,85 @@ log = logging.getLogger(__name__)
 
 
 def inspect_data(data_path: Path) -> None:
-    """Print summary statistics about the dataset, focusing on target distribution."""
-    df = pd.read_parquet(data_path)
-    log.info(f"Shape: {df.shape}")
-    log.info(f"Columns: {list(df.columns)}")
+    """Print summary statistics about the dataset, focusing on target distribution.
 
-    if TARGET_COL in df.columns:
-        target = df[TARGET_COL].dropna()
+    Uses DuckDB to compute stats without loading the full dataset into memory.
+    """
+    con = duckdb.connect()
+    con.sql("SET memory_limit = '2GB'")
+
+    shape = con.sql(f"""
+        SELECT COUNT(*) AS rows, COUNT(COLUMNS(*)) AS cols
+        FROM read_parquet('{data_path}')
+    """).fetchone()
+    cols = [r[0] for r in con.sql(f"""
+        SELECT column_name FROM (DESCRIBE SELECT * FROM read_parquet('{data_path}'))
+    """).fetchall()]
+    log.info(f"Shape: ({shape[0]:,}, {len(cols)})")
+    log.info(f"Columns: {cols}")
+
+    if TARGET_COL in cols:
+        stats = con.sql(f"""
+            SELECT
+                COUNT({TARGET_COL}) AS n_nonnull,
+                COUNT(*) AS n_total,
+                AVG({TARGET_COL}) AS mean_val,
+                MEDIAN({TARGET_COL}) AS median_val,
+                STDDEV({TARGET_COL}) AS std_val,
+                MIN({TARGET_COL}) AS min_val,
+                MAX({TARGET_COL}) AS max_val
+            FROM read_parquet('{data_path}')
+        """).fetchone()
+        n_nonnull, n_total, mean_v, median_v, std_v, min_v, max_v = stats
         log.info(f"\n=== Target: {TARGET_COL} ===")
-        log.info(f"  Non-null: {len(target):,} / {len(df):,} ({len(target)/len(df)*100:.1f}%)")
-        log.info(f"  Mean:   {target.mean():.5f}")
-        log.info(f"  Median: {target.median():.5f}")
-        log.info(f"  Std:    {target.std():.5f}")
-        log.info(f"  Min:    {target.min():.5f}")
-        log.info(f"  Max:    {target.max():.5f}")
+        log.info(f"  Non-null: {n_nonnull:,} / {n_total:,} ({n_nonnull/n_total*100:.1f}%)")
+        log.info(f"  Mean:   {mean_v:.5f}")
+        log.info(f"  Median: {median_v:.5f}")
+        log.info(f"  Std:    {std_v:.5f}")
+        log.info(f"  Min:    {min_v:.5f}")
+        log.info(f"  Max:    {max_v:.5f}")
 
         # Distribution of toxicity
         thresholds = settings.thresholds
-        n_higher = (target < thresholds.higher).sum()
-        n_static = ((target >= thresholds.higher) & (target < thresholds.static_lower)).sum()
-        n_lower = ((target >= thresholds.static_lower) & (target < thresholds.lower_skip)).sum()
-        n_skip = (target >= thresholds.lower_skip).sum()
+        tier_stats = con.sql(f"""
+            SELECT
+                SUM(CASE WHEN {TARGET_COL} < {thresholds.higher} THEN 1 ELSE 0 END) AS n_higher,
+                SUM(CASE WHEN {TARGET_COL} >= {thresholds.higher} AND {TARGET_COL} < {thresholds.static_lower} THEN 1 ELSE 0 END) AS n_static,
+                SUM(CASE WHEN {TARGET_COL} >= {thresholds.static_lower} AND {TARGET_COL} < {thresholds.lower_skip} THEN 1 ELSE 0 END) AS n_lower,
+                SUM(CASE WHEN {TARGET_COL} >= {thresholds.lower_skip} THEN 1 ELSE 0 END) AS n_skip
+            FROM read_parquet('{data_path}')
+            WHERE {TARGET_COL} IS NOT NULL
+        """).fetchone()
+        n_higher, n_static, n_lower, n_skip = tier_stats
 
         log.info(f"\n=== Tier distribution (with current thresholds) ===")
-        log.info(f"  HIGHER (< {thresholds.higher}):   {n_higher:>8,} ({n_higher/len(target)*100:5.1f}%)")
-        log.info(f"  STATIC:                         {n_static:>8,} ({n_static/len(target)*100:5.1f}%)")
-        log.info(f"  LOWER:                          {n_lower:>8,} ({n_lower/len(target)*100:5.1f}%)")
-        log.info(f"  SKIP   (>= {thresholds.lower_skip}):  {n_skip:>8,} ({n_skip/len(target)*100:5.1f}%)")
+        log.info(f"  HIGHER (< {thresholds.higher}):   {n_higher:>8,} ({n_higher/n_nonnull*100:5.1f}%)")
+        log.info(f"  STATIC:                         {n_static:>8,} ({n_static/n_nonnull*100:5.1f}%)")
+        log.info(f"  LOWER:                          {n_lower:>8,} ({n_lower/n_nonnull*100:5.1f}%)")
+        log.info(f"  SKIP   (>= {thresholds.lower_skip}):  {n_skip:>8,} ({n_skip/n_nonnull*100:5.1f}%)")
 
     # Check for ticket_state distribution
-    if "ticket_state" in df.columns:
+    if "ticket_state" in cols:
         log.info(f"\n=== ticket_state ===")
-        log.info(f"{df['ticket_state'].value_counts().to_string()}")
+        ts = con.sql(f"""
+            SELECT ticket_state, COUNT(*) AS cnt
+            FROM read_parquet('{data_path}')
+            GROUP BY ticket_state ORDER BY cnt DESC
+        """).fetchall()
+        for state, cnt in ts:
+            log.info(f"  {state}: {cnt:,}")
 
     # Null counts for aggregate features
-    agg_cols = [c for c in df.columns if c.startswith("bs_") or c.startswith("total_") or
+    agg_cols = [c for c in cols if c.startswith("bs_") or c.startswith("total_") or
                 c.startswith("avg_rejected") or c.startswith("risk_tier") or c == "mean_stake_size"]
     if agg_cols:
-        nulls = df[agg_cols].isnull().sum()
+        null_exprs = ", ".join(f"SUM(CASE WHEN {c} IS NULL THEN 1 ELSE 0 END) AS {c}" for c in agg_cols)
+        nulls = con.sql(f"SELECT {null_exprs} FROM read_parquet('{data_path}')").fetchone()
         log.info(f"\n=== Aggregate feature nulls ===")
-        log.info(f"{nulls.to_string()}")
+        for col, n in zip(agg_cols, nulls):
+            log.info(f"  {col}: {n:,}")
+
+    con.close()
 
 
 def main():
@@ -95,7 +118,7 @@ def main():
     if args.full:
         # Calibrate
         from pending_delay.model.calibrate import calibrate_model
-        calibrate_model(args.data, args.model_dir)
+        calibrate_model(args.model_dir)
 
         # OPE
         from pending_delay.evaluation.ope import run_ope

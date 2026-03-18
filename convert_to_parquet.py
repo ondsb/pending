@@ -14,64 +14,27 @@ from pathlib import Path
 
 import boto3
 from boto3.s3.transfer import TransferConfig
-import pyarrow as pa
 import pyarrow.csv as pcsv
 import pyarrow.parquet as pq
+
+from pending_delay.config import settings
+from pending_delay.schema import TICKET_SCHEMA
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-SRC_BUCKET = "oddin-statistics-data"
-CSV_KEY = "athena_results/81833cb9-ecaf-4e24-873b-bad30a69a898.csv"
+s3_cfg = settings.s3
+SRC_BUCKET = s3_cfg.src_bucket
+CSV_KEY = s3_cfg.csv_key
+DST_BUCKET = s3_cfg.dst_bucket
+PARQUET_KEY = s3_cfg.parquet_key
+AGGREGATES = s3_cfg.aggregates
 
-DST_BUCKET = "oddin-training-artifacts"
-PARQUET_KEY = "data/pending/tickets.parquet"
-
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = settings.data_dir
 LOCAL_CSV = DATA_DIR / "tickets_raw.csv"
 LOCAL_PARQUET = DATA_DIR / "tickets.parquet"
 
-AGGREGATES_BUCKET = "oddin-statistics-data"
-AGGREGATES = {
-    "bettor_stats":  "athena_results/ba2e1719-6078-4dfb-8f87-7fc93b530951.csv",
-    "rejected":      "athena_results/afb9b31b-8127-48c0-8454-7e6712f3bffb.csv",
-    "risk_tier":     "athena_results/0d396ecc-4719-472e-a5bd-2ec0f1b8e4c7.csv",
-    "stake_size":    "athena_results/adba3175-c0be-4ed7-a30d-0b6753f59b1c.csv",
-}
-
-SCHEMA = pa.schema([
-    ("ticket_id", pa.string()),
-    ("created_at", pa.string()),
-    ("accepted_at", pa.string()),
-    ("rejected_at", pa.string()),
-    ("bettor_id", pa.string()),
-    ("pending_delay", pa.int32()),
-    ("client_id", pa.int32()),
-    ("cashout_stake", pa.float64()),
-    ("reject_reason", pa.string()),
-    ("ticket_state", pa.string()),
-    ("match_id", pa.int32()),
-    ("home_team", pa.string()),
-    ("away_team", pa.string()),
-    ("stake", pa.float64()),
-    ("pnl", pa.float64()),
-    ("selection_odds", pa.float64()),
-    ("market_name", pa.string()),
-    ("market_type_id", pa.int32()),
-    ("market_params", pa.string()),
-    ("market_selection", pa.string()),
-    ("client_name", pa.string()),
-    ("bos", pa.float64()),
-    ("oaf", pa.float64()),
-    ("ots_risk_tier_id", pa.int64()),
-    ("sport_id", pa.int64()),
-    ("sport", pa.string()),
-    ("tournament_id", pa.int64()),
-    ("tournament", pa.string()),
-    ("odds_after_10", pa.float64()),
-    ("odds_after_30", pa.float64()),
-    ("odds_after_90", pa.float64()),
-])
+SCHEMA = TICKET_SCHEMA
 
 
 def make_progress_cb(total_bytes, label):
@@ -136,14 +99,14 @@ def download_aggregates(s3_src):
     agg_local = {}
     for name, key in AGGREGATES.items():
         local_path = DATA_DIR / Path(key).name
-        expected_size = s3_src.head_object(Bucket=AGGREGATES_BUCKET, Key=key)["ContentLength"]
+        expected_size = s3_src.head_object(Bucket=SRC_BUCKET, Key=key)["ContentLength"]
         if local_path.exists() and local_path.stat().st_size == expected_size:
             log.info(f"  {name}: cached ({expected_size/1e6:.0f} MB)")
         else:
             log.info(f"  {name}: downloading {expected_size/1e6:.0f} MB...")
             t0 = time.time()
             s3_src.download_file(
-                AGGREGATES_BUCKET, key, str(local_path),
+                SRC_BUCKET, key, str(local_path),
                 Config=TransferConfig(max_concurrency=10),
             )
             log.info(f"    done in {time.time()-t0:.0f}s")
@@ -337,7 +300,7 @@ def full_run(s3_src, s3_dst):
     # Step 4: Upload Parquet
     # Refresh credentials before upload — SSO token may have expired during download+convert
     log.info("Refreshing destination credentials before upload...")
-    s3_dst = boto3.Session(profile_name="oddin-model-training").client("s3")
+    s3_dst = boto3.Session(profile_name=s3_cfg.dst_profile).client("s3")
 
     log.info("Step 4/4: Uploading Parquet to S3...")
     t0 = time.time()
@@ -374,7 +337,7 @@ def main():
     if args.merge:
         if not LOCAL_PARQUET.exists():
             raise FileNotFoundError(f"No parquet to merge: {LOCAL_PARQUET}")
-        s3_src = boto3.Session(profile_name="oddin").client("s3")
+        s3_src = boto3.Session(profile_name=s3_cfg.src_profile).client("s3")
         agg_local = download_aggregates(s3_src)
         raw_parquet = DATA_DIR / "_tickets_raw.parquet"
         LOCAL_PARQUET.rename(raw_parquet)
@@ -382,15 +345,15 @@ def main():
         raw_parquet.unlink()
         log.info(f"Done: {LOCAL_PARQUET} ({LOCAL_PARQUET.stat().st_size/1e6:.1f} MB)")
     elif args.subset is not None:
-        s3_src = boto3.Session(profile_name="oddin").client("s3")
+        s3_src = boto3.Session(profile_name=s3_cfg.src_profile).client("s3")
         subset_run(s3_src, subset_mb=args.subset)
     elif args.test:
-        s3_src = boto3.Session(profile_name="oddin").client("s3")
-        s3_dst = boto3.Session(profile_name="oddin-model-training").client("s3")
+        s3_src = boto3.Session(profile_name=s3_cfg.src_profile).client("s3")
+        s3_dst = boto3.Session(profile_name=s3_cfg.dst_profile).client("s3")
         test_run(s3_src, s3_dst)
     else:
-        s3_src = boto3.Session(profile_name="oddin").client("s3")
-        s3_dst = boto3.Session(profile_name="oddin-model-training").client("s3")
+        s3_src = boto3.Session(profile_name=s3_cfg.src_profile).client("s3")
+        s3_dst = boto3.Session(profile_name=s3_cfg.dst_profile).client("s3")
         # Always run test first
         test_run(s3_src, s3_dst)
         full_run(s3_src, s3_dst)
