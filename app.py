@@ -1,4 +1,4 @@
-"""Streamlit browser for pending delay ticket data."""
+"""Streamlit browser for pending delay ticket data and model validation."""
 
 import streamlit as st
 import duckdb
@@ -9,6 +9,7 @@ st.set_page_config(page_title="Pending Delay Explorer", layout="wide")
 
 DATA_DIR = Path(__file__).parent / "data"
 LOCAL_PARQUET = DATA_DIR / "tickets.parquet"
+MODELS_ROOT = Path(__file__).parent / "models"
 
 # Tier thresholds (from pending_delay.config defaults)
 T_HIGHER = -0.02
@@ -24,7 +25,9 @@ def get_connection():
 @st.cache_data
 def get_total_rows():
     con = get_connection()
-    return con.sql(f"SELECT COUNT(*) FROM read_parquet('{LOCAL_PARQUET}')").fetchone()[0]
+    return con.sql(f"SELECT COUNT(*) FROM read_parquet('{LOCAL_PARQUET}')").fetchone()[
+        0
+    ]
 
 
 @st.cache_data
@@ -46,19 +49,59 @@ con = get_connection()
 
 st.title("Pending Delay Explorer")
 
-if not LOCAL_PARQUET.exists():
-    st.error(f"No data found at `{LOCAL_PARQUET}`. Run `python convert_to_parquet.py --merge` first.")
-    st.stop()
+# =========================================================================
+# Sidebar — model selection (shared by validation tabs)
+# =========================================================================
+from pending_delay.ui._loader import discover_model_dirs  # noqa: E402
 
-total_rows = get_total_rows()
-columns = get_column_names()
+model_dirs = discover_model_dirs(MODELS_ROOT)
+selected_model_dir: str | None = None
 
-tab_data, tab_analytics = st.tabs(["Dataset", "Analytics"])
+if model_dirs:
+    with st.sidebar:
+        st.header("Model")
+        labels = {str(d.relative_to(MODELS_ROOT)): str(d) for d in model_dirs}
+        choice = st.selectbox(
+            "Model directory",
+            list(labels.keys()),
+            key="sidebar_model",
+        )
+        selected_model_dir = labels[choice]
+        st.caption(f"`{selected_model_dir}`")
+
+has_data = LOCAL_PARQUET.exists()
+has_model = selected_model_dir is not None
+
+# =========================================================================
+# Tabs
+# =========================================================================
+tab_titles = ["Dataset", "Analytics"]
+if has_model:
+    tab_titles += [
+        "Model Validation",
+        "Tier Simulator",
+        "Segment Analysis",
+        "Model Comparison",
+        "Review Queue",
+    ]
+
+tabs = st.tabs(tab_titles)
+tab_data = tabs[0]
+tab_analytics = tabs[1]
 
 # =============================================================================
 # TAB 1: Dataset browser
 # =============================================================================
 with tab_data:
+    if not has_data:
+        st.error(
+            f"No data found at `{LOCAL_PARQUET}`. Run `python convert_to_parquet.py --merge` first."
+        )
+        st.stop()
+
+    total_rows = get_total_rows()
+    columns = get_column_names()
+
     st.caption(f"{total_rows:,} total rows | {len(columns)} columns")
 
     # Filters
@@ -75,7 +118,9 @@ with tab_data:
         reject_reason = fc3.selectbox("Reject Reason", ["all"] + reject_reasons)
 
         min_stake = fc4.number_input("Min Stake", value=0.0, step=1.0)
-        max_rows = fc5.number_input("Max Rows", value=5000, min_value=100, max_value=100000, step=1000)
+        max_rows = fc5.number_input(
+            "Max Rows", value=5000, min_value=100, max_value=100000, step=1000
+        )
 
     # Build query
     where = []
@@ -109,9 +154,15 @@ with tab_data:
 # TAB 2: Analytics
 # =============================================================================
 with tab_analytics:
+    if not has_data:
+        st.error(f"No data found at `{LOCAL_PARQUET}`.")
+        st.stop()
+
+    columns = get_column_names()
 
     # --- Overview metrics (computed via DuckDB for speed) ---
-    overview = con.sql(f"""
+    overview = (
+        con.sql(f"""
         SELECT
             COUNT(*) AS n,
             COUNT(DISTINCT bettor_id) AS n_bettors,
@@ -126,7 +177,10 @@ with tab_analytics:
             SUM(stake) AS total_stake,
             SUM(pnl) AS total_pnl
         FROM read_parquet('{LOCAL_PARQUET}')
-    """).df().iloc[0]
+    """)
+        .df()
+        .iloc[0]
+    )
 
     st.subheader("Overview")
     m1, m2, m3, m4, m5, m6 = st.columns(6)
@@ -179,9 +233,17 @@ with tab_analytics:
     clv_m1.metric("Mean CLV", f"{overview['avg_clv']:.5f}")
     clv_m2.metric("Median CLV", f"{overview['med_clv']:.5f}")
     # stddev via pandas to avoid DuckDB STDDEV_SAMP overflow
-    _std = con.sql(f"SELECT odds_after_10 FROM read_parquet('{LOCAL_PARQUET}') WHERE odds_after_10 IS NOT NULL LIMIT 500000").df()["odds_after_10"].std()
-    clv_m3.metric("Std Dev", f"{_std:.5f}" if pd.notna(_std) else "—")
-    clv_m4.metric("Coverage", f"{overview['n_clv_nonnull']:,.0f} / {overview['n']:,.0f}")
+    _std = (
+        con.sql(
+            f"SELECT odds_after_10 FROM read_parquet('{LOCAL_PARQUET}') WHERE odds_after_10 IS NOT NULL LIMIT 500000"
+        )
+        .df()["odds_after_10"]
+        .std()
+    )
+    clv_m3.metric("Std Dev", f"{_std:.5f}" if pd.notna(_std) else "---")
+    clv_m4.metric(
+        "Coverage", f"{overview['n_clv_nonnull']:,.0f} / {overview['n']:,.0f}"
+    )
 
     tier_df = con.sql(f"""
         SELECT
@@ -238,12 +300,20 @@ with tab_analytics:
     # --- Aggregate feature coverage ---
     st.divider()
     st.subheader("Aggregate Feature Coverage")
-    agg_cols = [c for c in columns if c.startswith("bs_") or c.startswith("total_")
-                or c.startswith("avg_rejected") or c.startswith("risk_tier")
-                or c.startswith("dominant_") or c == "mean_stake_size" or c == "n_reject_reasons"]
+    agg_cols = [
+        c
+        for c in columns
+        if c.startswith("bs_")
+        or c.startswith("total_")
+        or c.startswith("avg_rejected")
+        or c.startswith("risk_tier")
+        or c.startswith("dominant_")
+        or c == "mean_stake_size"
+        or c == "n_reject_reasons"
+    ]
     if agg_cols:
         null_parts = ", ".join(
-            f"ROUND(COUNT({c}) * 100.0 / COUNT(*), 1) AS \"{c}\"" for c in agg_cols
+            f'ROUND(COUNT({c}) * 100.0 / COUNT(*), 1) AS "{c}"' for c in agg_cols
         )
         coverage = con.sql(f"""
             SELECT {null_parts}
@@ -254,4 +324,50 @@ with tab_analytics:
         coverage_t.columns = ["feature", "coverage_pct"]
         st.dataframe(coverage_t, use_container_width=True, hide_index=True)
     else:
-        st.warning("No aggregate features found — did you run --merge?")
+        st.warning("No aggregate features found --- did you run --merge?")
+
+# =============================================================================
+# TAB 3-7: Model validation tabs (only shown when a model is available)
+# =============================================================================
+if has_model:
+    assert selected_model_dir is not None
+
+    # --- TAB 3: Model Validation ---
+    with tabs[2]:
+        from pending_delay.ui.tab_validation import render as render_validation
+
+        render_validation(selected_model_dir)
+
+    # --- TAB 4: Tier Simulator ---
+    with tabs[3]:
+        from pending_delay.ui.tab_tier_simulator import render as render_simulator
+
+        render_simulator(selected_model_dir)
+
+    # --- TAB 5: Segment Analysis ---
+    with tabs[4]:
+        from pending_delay.ui.tab_segments import render as render_segments
+
+        render_segments(selected_model_dir)
+
+    # --- TAB 6: Model Comparison ---
+    with tabs[5]:
+        from pending_delay.ui.tab_comparison import render as render_comparison
+
+        render_comparison(MODELS_ROOT)
+
+    # --- TAB 7: Review Queue ---
+    with tabs[6]:
+        from pending_delay.ui.tab_review import render as render_review
+
+        render_review(selected_model_dir)
+
+elif not model_dirs:
+    # No models found — show a hint on the data tabs
+    st.sidebar.info(
+        "No trained models found.  "
+        "Run the training pipeline to enable the validation tabs:\n\n"
+        "```\n"
+        "python build_dataset.py --data data/tickets.parquet --full\n"
+        "```"
+    )

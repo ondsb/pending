@@ -57,8 +57,8 @@ class SplitConfig(BaseSettings):
 
 class Settings(BaseSettings):
     project_root: Path = Path(__file__).resolve().parent.parent.parent
-    data_dir: Path = Field(default=None)
-    model_dir: Path = Field(default=None)
+    data_dir: Path | None = Field(default=None)
+    model_dir: Path | None = Field(default=None)
 
     s3: S3Config = S3Config()
     model: ModelConfig = ModelConfig()

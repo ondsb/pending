@@ -14,6 +14,7 @@ dependencies = [
     "pyarrow",
     "scikit-learn",
     "streamlit",
+    "plotly",
     "boto3-stubs~=1.42.69",
 ]
 
