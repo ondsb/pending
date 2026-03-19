@@ -74,7 +74,7 @@ class SplitConfig(BaseSettings):
     train_frac: float = 0.70
     val_frac: float = 0.15
     # test_frac = 1 - train_frac - val_frac = 0.15
-    max_train_rows: int | None = 10_000_000  # None = use all rows
+    max_train_rows: int | None = None  # None = use all rows
 
 
 class FeatureConfig(BaseSettings):
@@ -86,13 +86,13 @@ class FeatureConfig(BaseSettings):
 
     features: list[str] = [
         # Aggregate bettor-level (strongest signal)
-        "bs_avg_odds_after_10",
-        "avg_rejected_odds_after_10",
-        "bs_avg_odds_after_30",
-        "avg_rejected_odds_after_30",
-        "bs_avg_odds_after_90",
-        "avg_rejected_odds_after_90",
-        "bs_stake",
+        # "bs_avg_odds_after_10",
+        # "avg_rejected_odds_after_10",
+        # "bs_avg_odds_after_30",
+        # "avg_rejected_odds_after_30",
+        # "bs_avg_odds_after_90",
+        # "avg_rejected_odds_after_90",
+        # "bs_stake",
         # "bs_pnl",
         # "bs_margin",
         # "bs_rejected_stake",
@@ -107,20 +107,20 @@ class FeatureConfig(BaseSettings):
         # "dominant_risk_tier",
         # Ticket-level
         "selection_odds",
-        # "stake",
-        # "pending_delay",
-        "market_name",
-        # "market_selection",
-        # "sport",
+        "stake",
+        "pending_delay",
+        # "market_name",
+        "market_selection",
+        "sport",
         # "sport_id",
         # "tournament_id",
-        # "client_id",
+        "client_id",
         # "ots_risk_tier_id",
-        # "market_type_id",
+        "market_type_id",
         # "bos",
         # Engineered
-        # "stake_ratio",
-        # "odds_bucket",
+        "stake_ratio",
+        "odds_bucket",
     ]
     target: str = "odds_after_10"
     categoricals: list[str] = [
