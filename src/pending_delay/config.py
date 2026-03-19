@@ -6,6 +6,26 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+class FilterRule(BaseSettings):
+    """A single row-filtering rule: keep rows where ``column op value`` is True."""
+
+    column: str
+    op: str = ">="  # ==, !=, <, <=, >, >=
+    value: float | int | str = 0
+
+
+class FilterConfig(BaseSettings):
+    """Pre-training row filters applied during the temporal split.
+
+    Add / remove rules here — no code changes needed elsewhere.
+    """
+
+    rules: list[FilterRule] = [
+        FilterRule(column="bos", op=">=", value=1.0),
+        # FilterRule(column="selection_status", op="!=", value="prematch"),
+    ]
+
+
 class S3Config(BaseSettings):
     src_bucket: str = "oddin-statistics-data"
     dst_bucket: str = "oddin-training-artifacts"
@@ -101,7 +121,12 @@ class FeatureConfig(BaseSettings):
         "odds_bucket",
     ]
     target: str = "odds_after_10"
-    categoricals: list[str] = ["market_name", "market_selection", "sport", "odds_bucket"]
+    categoricals: list[str] = [
+        "market_name",
+        "market_selection",
+        "sport",
+        "odds_bucket",
+    ]
 
 
 class Settings(BaseSettings):
@@ -114,6 +139,7 @@ class Settings(BaseSettings):
     thresholds: ThresholdConfig = ThresholdConfig()
     split: SplitConfig = SplitConfig()
     feature: FeatureConfig = FeatureConfig()
+    filter: FilterConfig = FilterConfig()
 
     def model_post_init(self, __context):
         if self.data_dir is None:

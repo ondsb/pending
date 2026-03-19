@@ -15,10 +15,12 @@ import pyarrow.parquet as pq
 
 from pending_delay.config import settings
 from pending_delay.features.engineering import encode_features_to_numpy
+from pending_delay.features.filters import apply_filters
 from pending_delay.schema import TARGET_COL
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+
 
 def split_to_parquet(
     data_path: Path,
@@ -59,6 +61,9 @@ def split_to_parquet(
         mask = pc.and_(pc.is_valid(target), pc.is_finite(target))
         table = table.filter(mask)
 
+        # Apply configurable pre-training filters (e.g. bos >= 1)
+        table = apply_filters(table, settings.filter.rules)
+
         # Add engineered features
         stake = table.column("stake")
         mean_ss = table.column("mean_stake_size")
@@ -71,13 +76,17 @@ def split_to_parquet(
 
         odds = table.column("selection_odds")
         buckets = pc.if_else(
-            pc.less(odds, 1.3), pa.scalar("heavy_fav"),
+            pc.less(odds, 1.3),
+            pa.scalar("heavy_fav"),
             pc.if_else(
-                pc.less(odds, 1.7), pa.scalar("slight_fav"),
+                pc.less(odds, 1.7),
+                pa.scalar("slight_fav"),
                 pc.if_else(
-                    pc.less(odds, 2.2), pa.scalar("even"),
+                    pc.less(odds, 2.2),
+                    pa.scalar("even"),
                     pc.if_else(
-                        pc.less(odds, 3.5), pa.scalar("underdog"),
+                        pc.less(odds, 3.5),
+                        pa.scalar("underdog"),
                         pa.scalar("longshot"),
                     ),
                 ),
@@ -90,8 +99,11 @@ def split_to_parquet(
         # Figure out which rows go to which split
         for start, end, split in [
             (0, max(0, min(n, train_end - rows_seen)), "train"),
-            (max(0, min(n, train_end - rows_seen)),
-             max(0, min(n, val_end - rows_seen)), "val"),
+            (
+                max(0, min(n, train_end - rows_seen)),
+                max(0, min(n, val_end - rows_seen)),
+                "val",
+            ),
             (max(0, min(n, val_end - rows_seen)), n, "test"),
         ]:
             if start >= end:
@@ -99,7 +111,8 @@ def split_to_parquet(
             chunk = table.slice(start, end - start)
             if split not in writers:
                 writers[split] = pq.ParquetWriter(
-                    str(paths[split]), chunk.schema,
+                    str(paths[split]),
+                    chunk.schema,
                     compression="zstd",
                 )
             writers[split].write_table(chunk)
@@ -129,8 +142,7 @@ class ParquetBatchSequence(lgb.Sequence):
         self.pf = pq.ParquetFile(parquet_path)
         self.n_row_groups = self.pf.metadata.num_row_groups
         self._batch_sizes = [
-            self.pf.metadata.row_group(i).num_rows
-            for i in range(self.n_row_groups)
+            self.pf.metadata.row_group(i).num_rows for i in range(self.n_row_groups)
         ]
         self._offsets = np.cumsum([0] + self._batch_sizes)
         self._cached_rg_idx = -1
@@ -235,14 +247,16 @@ def train_model(
     log.info("Building LightGBM train dataset (batched)...")
     train_seq = ParquetBatchSequence(train_path, feature_names)
     dtrain = lgb.Dataset(
-        train_seq, label=y_train,
+        train_seq,
+        label=y_train,
         free_raw_data=True,
     )
 
     log.info("Building LightGBM val dataset (batched)...")
     val_seq = ParquetBatchSequence(val_path, feature_names)
     dval = lgb.Dataset(
-        val_seq, label=y_val,
+        val_seq,
+        label=y_val,
         reference=dtrain,
         free_raw_data=True,
     )
@@ -323,7 +337,9 @@ def train_model(
 
 def main():
     parser = argparse.ArgumentParser(description="Train pending delay model")
-    parser.add_argument("--data", type=Path, default=settings.data_dir / "tickets.parquet")
+    parser.add_argument(
+        "--data", type=Path, default=settings.data_dir / "tickets.parquet"
+    )
     parser.add_argument("--model-dir", type=Path, default=None)
     args = parser.parse_args()
     train_model(args.data, args.model_dir)
