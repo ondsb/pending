@@ -59,15 +59,14 @@ class ModelConfig(BaseSettings):
 
 
 class ThresholdConfig(BaseSettings):
-    """Delay tier thresholds applied to predicted CLV (odds_after_10).
+    """Binary delay threshold applied to predicted CLV (odds_after_10).
 
     Negative predicted CLV = line moved in bettor's favor = sharp/toxic.
+    pred < pending → PENDING (keep original delay)
+    pred >= pending → SKIP (bypass delay)
     """
 
-    higher: float = -0.02  # pred < higher → HIGHER delay (punitive)
-    static_lower: float = -0.005  # higher <= pred < static_lower → STATIC
-    lower_skip: float = 0.005  # static_lower <= pred < lower_skip → LOWER delay
-    # pred >= lower_skip → SKIP (recreational, bypass)
+    pending: float = -0.02  # pred < pending → PENDING (keep original delay)
 
 
 class SplitConfig(BaseSettings):

@@ -74,17 +74,15 @@ def run_ope(
     plot_calibration_bins(y_test, preds, output_dir / "calibration.png")
 
     importance = dict(
-        zip(X_test.columns.tolist(), booster.feature_importance(importance_type="gain").tolist())
+        zip(expected_features, booster.feature_importance(importance_type="gain").tolist())
     )
     plot_feature_importance(importance, output_dir / "feature_importance.png")
 
-    # --- Delay Tier Assignment ---
+    # --- Delay Tier Assignment (binary: SKIP vs PENDING) ---
     pred_series = pd.Series(preds, index=test_with_target.index)
     tiers = classify_toxicity(
         pred_series,
-        higher=settings.thresholds.higher,
-        static_lower=settings.thresholds.static_lower,
-        lower_skip=settings.thresholds.lower_skip,
+        pending=settings.thresholds.pending,
     )
 
     tier_dist = tiers.value_counts()
@@ -95,24 +93,24 @@ def run_ope(
     summary = policy_summary(sim_df)
 
     log.info(f"Skip rate: {summary['skip_rate']:.1%}")
-    log.info(f"Friction reduced rate: {summary['friction_reduced_rate']:.1%}")
+    log.info(f"Pending rate: {summary['pending_rate']:.1%}")
     log.info(f"PnL delta: {summary['pnl_delta']:,.2f} ({summary['pnl_delta_pct']:+.1f}%)")
 
-    # --- HIGHER Tier Review Sample ---
-    higher_mask = sim_df["model_tier"] == "HIGHER"
-    higher_tickets = sim_df[higher_mask].copy()
-    higher_tickets["predicted_clv"] = preds[higher_mask.values]
-    if len(higher_tickets) > 100:
-        worst_50 = higher_tickets.nsmallest(50, "predicted_clv")
-        remaining = higher_tickets.drop(worst_50.index)
+    # --- PENDING Tier Review Sample ---
+    pending_mask = sim_df["model_tier"] == "PENDING"
+    pending_tickets = sim_df[pending_mask].copy()
+    pending_tickets["predicted_clv"] = preds[pending_mask.values]
+    if len(pending_tickets) > 100:
+        worst_50 = pending_tickets.nsmallest(50, "predicted_clv")
+        remaining = pending_tickets.drop(worst_50.index)
         random_50 = remaining.sample(min(50, len(remaining)), random_state=42)
         review_sample = pd.concat([worst_50, random_50])
     else:
-        review_sample = higher_tickets
+        review_sample = pending_tickets
 
-    review_path = output_dir / "higher_review_sample.parquet"
+    review_path = output_dir / "pending_review_sample.parquet"
     review_sample.to_parquet(review_path, index=False)
-    log.info(f"Saved {len(review_sample)} HIGHER tickets for review -> {review_path}")
+    log.info(f"Saved {len(review_sample)} PENDING tickets for review -> {review_path}")
 
     # --- Save All Results ---
     all_metrics = {**metrics, **summary}

@@ -19,13 +19,13 @@ def add_target(df: pd.DataFrame, target_col: str = "odds_after_10") -> pd.DataFr
 
 def classify_toxicity(
     predictions: pd.Series,
-    higher: float = -0.02,
-    static_lower: float = -0.005,
-    lower_skip: float = 0.005,
+    pending: float = -0.02,
 ) -> pd.Series:
-    """Map continuous CLV predictions to delay tiers: HIGHER, STATIC, LOWER, SKIP."""
+    """Map continuous CLV predictions to binary delay tiers: PENDING or SKIP.
+
+    pred < pending  → PENDING (keep original delay)
+    pred >= pending → SKIP (bypass delay)
+    """
     tiers = pd.Series("SKIP", index=predictions.index)
-    tiers[predictions < lower_skip] = "LOWER"
-    tiers[predictions < static_lower] = "STATIC"
-    tiers[predictions < higher] = "HIGHER"
+    tiers[predictions < pending] = "PENDING"
     return tiers

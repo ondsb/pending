@@ -67,7 +67,7 @@ con = get_connection()
 tab_results, tab_review, tab_data, tab_analytics, tab_features = st.tabs(
     [
         "Model Results",
-        "HIGHER Review",
+        "PENDING Review",
         "Data Explorer",
         "Analytics",
         "Feature Analysis",
@@ -105,22 +105,24 @@ with tab_results:
             c4.metric("Median AE", f"{ope['median_ae']:.5f}")
 
             st.subheader("Policy Simulation")
+            pending_count = ope.get("pending_count", 0)
+            skip_count = ope.get("skip_count", 0)
+            skip_rejected = ope.get("skip_rejected_count", 0)
+
             c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Skip Rate", f"{ope['skip_rate']:.1%}")
-            c2.metric("Friction Reduced", f"{ope['friction_reduced_rate']:.1%}")
-            c3.metric("HIGHER Count", f"{ope['higher_count']:,}")
+            c2.metric("Pending Count", f"{pending_count:,}")
+            c3.metric("Skip → Unrejected", f"{skip_rejected:,}")
             c4.metric("PnL Delta", f"{ope['pnl_delta']:,.0f}")
             c5.metric("PnL Delta %", f"{ope['pnl_delta_pct']:+.2f}%")
 
             # Tier distribution
             tier_data = pd.DataFrame(
                 {
-                    "Tier": ["SKIP", "LOWER", "STATIC", "HIGHER"],
+                    "Tier": ["SKIP", "PENDING"],
                     "Count": [
-                        ope["skip_count"],
-                        ope["lower_count"],
-                        ope["static_count"],
-                        ope["higher_count"],
+                        skip_count,
+                        pending_count,
                     ],
                 }
             )
@@ -132,9 +134,7 @@ with tab_results:
                 color="Tier",
                 color_discrete_map={
                     "SKIP": "#2ecc71",
-                    "LOWER": "#3498db",
-                    "STATIC": "#f39c12",
-                    "HIGHER": "#e74c3c",
+                    "PENDING": "#e74c3c",
                 },
                 text=tier_data["Pct"].map("{:.1f}%".format),
             )
@@ -184,9 +184,12 @@ with tab_results:
 # TAB 2: HIGHER Ticket Review
 # =============================================================================
 with tab_review:
-    st.header("HIGHER Tier Review — 100 Selected Tickets")
+    st.header("PENDING Tier Review — 100 Selected Tickets")
 
-    review_path = OPE_DIR / "higher_review_sample.parquet"
+    review_path = OPE_DIR / "pending_review_sample.parquet"
+    if not review_path.exists():
+        # Fall back to old filename from 4-tier system
+        review_path = OPE_DIR / "higher_review_sample.parquet"
     if not review_path.exists():
         st.warning("No review sample found. Run the full pipeline first.")
     else:
@@ -339,7 +342,7 @@ with tab_review:
                 y=-0.01, line_dash="dot", line_color="crimson", opacity=0.5
             )
             fig_hist_clv.add_vline(
-                x=T.higher, line_dash="dot", line_color="orange", opacity=0.5
+                x=T.pending, line_dash="dot", line_color="orange", opacity=0.5
             )
             fig_hist_clv.update_layout(height=400)
             st.plotly_chart(fig_hist_clv, use_container_width=True)
@@ -508,10 +511,8 @@ with tab_analytics:
     tier_df = con.sql(f"""
         SELECT
             CASE
-                WHEN odds_after_10 < {T.higher} THEN '1. HIGHER'
-                WHEN odds_after_10 < {T.static_lower} THEN '2. STATIC'
-                WHEN odds_after_10 < {T.lower_skip}  THEN '3. LOWER'
-                ELSE '4. SKIP'
+                WHEN odds_after_10 < {T.pending} THEN '1. PENDING'
+                ELSE '2. SKIP'
             END AS tier,
             COUNT(*) AS n,
             ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct,
