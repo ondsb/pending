@@ -596,10 +596,17 @@ with tab_features:
 
         excluded = set(LEAKED_COLUMNS + DROP_METADATA + [TARGET_COL])
 
+        # Build WHERE clause from pre-training filter rules (same as train.py)
+        filter_clauses = [f"{TARGET_COL} IS NOT NULL"]
+        for rule in settings.filter.rules:
+            val = f"'{rule.value}'" if isinstance(rule.value, str) else rule.value
+            filter_clauses.append(f"{rule.column} {rule.op} {val}")
+        fa_where = " AND ".join(filter_clauses)
+
         with st.spinner(f"Sampling {sample_size:,} rows..."):
             df_fa = con.sql(f"""
                 SELECT * FROM tickets
-                WHERE {TARGET_COL} IS NOT NULL
+                WHERE {fa_where}
                 USING SAMPLE {sample_size}
             """).df()
         st.success(f"Loaded {len(df_fa):,} rows")
