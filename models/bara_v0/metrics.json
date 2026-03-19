@@ -1,0 +1,31 @@
+{
+  "val_mae": 0.019016556136255393,
+  "val_rmse": 0.044634010863927494,
+  "best_iteration": -1,
+  "n_features": 9,
+  "n_val": 1346315,
+  "n_test": 3141402,
+  "features_used": [
+    "selection_odds",
+    "stake",
+    "pending_delay",
+    "market_selection",
+    "sport",
+    "client_id",
+    "market_type_id",
+    "stake_ratio",
+    "odds_bucket"
+  ],
+  "feature_importance_top20": {
+    "client_id": 88.73843321204185,
+    "selection_odds": 80.9362763389945,
+    "stake": 51.33408595621586,
+    "stake_ratio": 44.459321692585945,
+    "sport": 39.3127628415823,
+    "pending_delay": 32.542929001152515,
+    "market_selection": 26.490271016955376,
+    "market_type_id": 24.876810878515244,
+    "odds_bucket": 10.9722338616848
+  },
+  "source": "external"
+}
