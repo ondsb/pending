@@ -22,7 +22,8 @@ class FilterConfig(BaseSettings):
 
     rules: list[FilterRule] = [
         FilterRule(column="bos", op=">=", value=1.0),
-        # FilterRule(column="selection_status", op="!=", value="prematch"),
+        FilterRule(column="pending_delay", op=">", value=0),  # pending_delay = 0 means prematch
+        FilterRule(column="pending_delay", op="<=", value=9),  # pending_delay > 9 means manually reviewed -> we want to keep the delay
     ]
 
 
@@ -73,7 +74,7 @@ class SplitConfig(BaseSettings):
     train_frac: float = 0.70
     val_frac: float = 0.15
     # test_frac = 1 - train_frac - val_frac = 0.15
-    max_train_rows: int | None = None  # None = use all rows
+    max_train_rows: int | None = 10_000_000  # None = use all rows
 
 
 class FeatureConfig(BaseSettings):
@@ -92,34 +93,34 @@ class FeatureConfig(BaseSettings):
         "bs_avg_odds_after_90",
         "avg_rejected_odds_after_90",
         "bs_stake",
-        "bs_pnl",
-        "bs_margin",
-        "bs_rejected_stake",
-        "bs_rejected_pnl",
-        "total_rejected_stake",
-        "total_rejected_pnl",
-        "risk_tier_total_pnl",
-        "risk_tier_avg_margin",
-        "risk_tier_total_volume",
-        "mean_stake_size",
-        "n_reject_reasons",
-        "dominant_risk_tier",
+        # "bs_pnl",
+        # "bs_margin",
+        # "bs_rejected_stake",
+        # "bs_rejected_pnl",
+        # "total_rejected_stake",
+        # "total_rejected_pnl",
+        # "risk_tier_total_pnl",
+        # "risk_tier_avg_margin",
+        # "risk_tier_total_volume",
+        # "mean_stake_size",
+        # "n_reject_reasons",
+        # "dominant_risk_tier",
         # Ticket-level
         "selection_odds",
-        "stake",
-        "pending_delay",
+        # "stake",
+        # "pending_delay",
         "market_name",
-        "market_selection",
-        "sport",
-        "sport_id",
-        "tournament_id",
-        "client_id",
-        "ots_risk_tier_id",
-        "market_type_id",
-        "bos",
+        # "market_selection",
+        # "sport",
+        # "sport_id",
+        # "tournament_id",
+        # "client_id",
+        # "ots_risk_tier_id",
+        # "market_type_id",
+        # "bos",
         # Engineered
-        "stake_ratio",
-        "odds_bucket",
+        # "stake_ratio",
+        # "odds_bucket",
     ]
     target: str = "odds_after_10"
     categoricals: list[str] = [
