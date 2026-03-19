@@ -73,6 +73,7 @@ class SplitConfig(BaseSettings):
     train_frac: float = 0.70
     val_frac: float = 0.15
     # test_frac = 1 - train_frac - val_frac = 0.15
+    max_train_rows: int | None = None  # None = use all rows
 
 
 class FeatureConfig(BaseSettings):

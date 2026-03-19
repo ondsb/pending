@@ -44,7 +44,9 @@ def split_to_parquet(
     val_end = int(total * (train_frac + val_frac))
 
     log.info(f"Total rows: {total:,}")
-    log.info(f"Split: train={train_end:,}, val={val_end - train_end:,}, test={total - val_end:,}")
+    log.info(
+        f"Split: train={train_end:,}, val={val_end - train_end:,}, test={total - val_end:,}"
+    )
 
     import pyarrow as pa
     import pyarrow.compute as pc
@@ -136,7 +138,9 @@ class ParquetBatchSequence(lgb.Sequence):
     Caches the current row group so sequential access is fast.
     """
 
-    def __init__(self, parquet_path: Path, feature_names: list[str]):
+    def __init__(
+        self, parquet_path: Path, feature_names: list[str], max_rows: int | None = None
+    ):
         self.path = parquet_path
         self.feature_names = feature_names
         self.pf = pq.ParquetFile(parquet_path)
@@ -144,6 +148,18 @@ class ParquetBatchSequence(lgb.Sequence):
         self._batch_sizes = [
             self.pf.metadata.row_group(i).num_rows for i in range(self.n_row_groups)
         ]
+        # Trim to max_rows by keeping only enough row groups
+        if max_rows is not None:
+            trimmed = []
+            total = 0
+            for size in self._batch_sizes:
+                remaining = max_rows - total
+                if remaining <= 0:
+                    break
+                trimmed.append(min(size, remaining))
+                total += trimmed[-1]
+            self._batch_sizes = trimmed
+            self.n_row_groups = len(trimmed)
         self._offsets = np.cumsum([0] + self._batch_sizes)
         self._cached_rg_idx = -1
         self._cached_data = None
@@ -151,7 +167,12 @@ class ParquetBatchSequence(lgb.Sequence):
     def _load_row_group(self, rg_idx):
         if rg_idx != self._cached_rg_idx:
             table = self.pf.read_row_group(rg_idx, columns=self.feature_names)
-            self._cached_data = encode_features_to_numpy(table.to_pandas())
+            data = encode_features_to_numpy(table.to_pandas())
+            # Trim the last row group if max_rows cut it short
+            expected = self._batch_sizes[rg_idx]
+            if data.shape[0] > expected:
+                data = data[:expected]
+            self._cached_data = data
             self._cached_rg_idx = rg_idx
         return self._cached_data
 
@@ -184,11 +205,13 @@ class ParquetBatchSequence(lgb.Sequence):
         return self._batch_sizes
 
 
-def _read_labels(parquet_path: Path) -> np.ndarray:
+def _read_labels(parquet_path: Path, max_rows: int | None = None) -> np.ndarray:
     """Read only the target column from parquet — cheap columnar read."""
     y = pq.read_table(parquet_path, columns=[TARGET_COL]).to_pandas()[TARGET_COL].values
     # Replace any remaining inf with 0 (shouldn't happen after split filtering, but safety net)
     y = np.where(np.isfinite(y), y, 0.0)
+    if max_rows is not None:
+        y = y[:max_rows]
     return y
 
 
@@ -237,15 +260,20 @@ def train_model(
     log.info(f"Feature list: {feature_names}")
 
     # Read labels only (just one column — small)
-    y_train = _read_labels(train_path)
+    max_train = settings.split.max_train_rows
+    y_train = _read_labels(train_path, max_rows=max_train)
     y_val = _read_labels(val_path)
 
+    log.info(
+        f"Target — train: {len(y_train):,} rows"
+        + (f" (capped from max_train_rows={max_train:,})" if max_train else "")
+    )
     log.info(f"Target — train: mean={y_train.mean():.4f} std={y_train.std():.4f}")
     log.info(f"Target — val:   mean={y_val.mean():.4f} std={y_val.std():.4f}")
 
     # Build LightGBM datasets via Sequence — one row group in memory at a time
     log.info("Building LightGBM train dataset (batched)...")
-    train_seq = ParquetBatchSequence(train_path, feature_names)
+    train_seq = ParquetBatchSequence(train_path, feature_names, max_rows=max_train)
     dtrain = lgb.Dataset(
         train_seq,
         label=y_train,
