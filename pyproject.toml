@@ -16,6 +16,7 @@ dependencies = [
     "streamlit",
     "plotly",
     "boto3-stubs~=1.42.69",
+    "plotly>=6.6.0",
 ]
 
 [project.scripts]

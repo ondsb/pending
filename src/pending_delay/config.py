@@ -6,6 +6,27 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+class FilterRule(BaseSettings):
+    """A single row-filtering rule: keep rows where ``column op value`` is True."""
+
+    column: str
+    op: str = ">="  # ==, !=, <, <=, >, >=
+    value: float | int | str = 0
+
+
+class FilterConfig(BaseSettings):
+    """Pre-training row filters applied during the temporal split.
+
+    Add / remove rules here — no code changes needed elsewhere.
+    """
+
+    rules: list[FilterRule] = [
+        FilterRule(column="bos", op=">=", value=1.0),
+        FilterRule(column="pending_delay", op=">", value=0),  # pending_delay = 0 means prematch
+        FilterRule(column="pending_delay", op="<=", value=9),  # pending_delay > 9 means manually reviewed -> we want to keep the delay
+    ]
+
+
 class S3Config(BaseSettings):
     src_bucket: str = "oddin-statistics-data"
     dst_bucket: str = "oddin-training-artifacts"
@@ -53,6 +74,61 @@ class SplitConfig(BaseSettings):
     train_frac: float = 0.70
     val_frac: float = 0.15
     # test_frac = 1 - train_frac - val_frac = 0.15
+    max_train_rows: int | None = 10_000_000  # None = use all rows
+
+
+class FeatureConfig(BaseSettings):
+    """Specify which features to use for training.
+
+    Set `features` to a list of column names. If empty/None, uses all
+    available numeric + categorical columns (minus leaked/metadata).
+    """
+
+    features: list[str] = [
+        # Aggregate bettor-level (strongest signal)
+        "bs_avg_odds_after_10",
+        "avg_rejected_odds_after_10",
+        "bs_avg_odds_after_30",
+        "avg_rejected_odds_after_30",
+        "bs_avg_odds_after_90",
+        "avg_rejected_odds_after_90",
+        "bs_stake",
+        # "bs_pnl",
+        # "bs_margin",
+        # "bs_rejected_stake",
+        # "bs_rejected_pnl",
+        # "total_rejected_stake",
+        # "total_rejected_pnl",
+        # "risk_tier_total_pnl",
+        # "risk_tier_avg_margin",
+        # "risk_tier_total_volume",
+        # "mean_stake_size",
+        # "n_reject_reasons",
+        # "dominant_risk_tier",
+        # Ticket-level
+        "selection_odds",
+        # "stake",
+        # "pending_delay",
+        "market_name",
+        # "market_selection",
+        # "sport",
+        # "sport_id",
+        # "tournament_id",
+        # "client_id",
+        # "ots_risk_tier_id",
+        # "market_type_id",
+        # "bos",
+        # Engineered
+        # "stake_ratio",
+        # "odds_bucket",
+    ]
+    target: str = "odds_after_10"
+    categoricals: list[str] = [
+        "market_name",
+        "market_selection",
+        "sport",
+        "odds_bucket",
+    ]
 
 
 class Settings(BaseSettings):
@@ -64,6 +140,8 @@ class Settings(BaseSettings):
     model: ModelConfig = ModelConfig()
     thresholds: ThresholdConfig = ThresholdConfig()
     split: SplitConfig = SplitConfig()
+    feature: FeatureConfig = FeatureConfig()
+    filter: FilterConfig = FilterConfig()
 
     def model_post_init(self, __context):
         if self.data_dir is None:

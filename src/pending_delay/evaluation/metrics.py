@@ -1,4 +1,4 @@
-"""Evaluation metrics and visualization for the pending delay model."""
+"""Regression metrics and evaluation plots."""
 
 import logging
 from pathlib import Path
@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 

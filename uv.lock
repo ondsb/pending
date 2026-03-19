@@ -939,6 +939,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "plotly" },
+    { name = "plotly", specifier = ">=6.6.0" },
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pydantic-settings" },

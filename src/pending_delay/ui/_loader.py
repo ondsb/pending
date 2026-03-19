@@ -16,7 +16,10 @@ import pandas as pd
 import streamlit as st
 from sklearn.isotonic import IsotonicRegression
 
-from pending_delay.features.engineering import prepare_features
+from pending_delay.features.engineering import (
+    encode_features_to_numpy,
+    engineer_features,
+)
 from pending_delay.features.target import add_target
 from pending_delay.schema import TARGET_COL
 
@@ -125,18 +128,18 @@ def compute_predictions(model_dir: str) -> pd.DataFrame:
 
     test_df = pd.read_parquet(test_path)
 
-    # Prepare features (mirrors evaluation/ope.py flow)
+    # Engineer features (adds stake_ratio, odds_bucket if not already present)
     test_with_target = add_target(test_df, TARGET_COL)
-    X_test, y_test, _ = prepare_features(
-        test_with_target, fit_categories=False, category_maps=cat_maps
-    )
+    test_with_target = engineer_features(test_with_target)
 
-    # Convert categorical columns to category dtype for LightGBM
-    from pending_delay.schema import CATEGORICAL_FEATURES
+    # Use the model's own feature names (not the config's feature list) and
+    # encode to numpy -- mirrors the OPE flow in evaluation/ope.py and avoids
+    # pandas categorical mismatches with externally-trained models.
+    feature_names: list[str] = arts["feature_names"]
+    available = [f for f in feature_names if f in test_with_target.columns]
+    X_test = encode_features_to_numpy(test_with_target[available])
 
-    for col in CATEGORICAL_FEATURES:
-        if col in X_test.columns:
-            X_test[col] = X_test[col].astype("category")
+    y_test = test_with_target[TARGET_COL]
 
     raw_preds = booster.predict(X_test)
     cal_preds = calibrator.predict(raw_preds) if calibrator is not None else raw_preds
