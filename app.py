@@ -48,7 +48,13 @@ def get_column_names():
 
 @st.cache_data
 def get_distinct_values(col):
-    vals = get_connection().sql(f"SELECT DISTINCT {col} FROM tickets WHERE {col} IS NOT NULL ORDER BY {col}").fetchall()
+    vals = (
+        get_connection()
+        .sql(
+            f"SELECT DISTINCT {col} FROM tickets WHERE {col} IS NOT NULL ORDER BY {col}"
+        )
+        .fetchall()
+    )
     return [r[0] for r in vals]
 
 
@@ -144,7 +150,9 @@ with tab_results:
         st.subheader("Feature Importance (Gain)")
         imp = metrics.get("feature_importance_top20", {})
         if imp:
-            imp_df = pd.DataFrame({"Feature": list(imp.keys()), "Gain": list(imp.values())})
+            imp_df = pd.DataFrame(
+                {"Feature": list(imp.keys()), "Gain": list(imp.values())}
+            )
             imp_df = imp_df.sort_values("Gain", ascending=True)
             fig_imp = px.bar(imp_df, x="Gain", y="Feature", orientation="h", height=500)
             fig_imp.update_layout(yaxis=dict(dtick=1))
@@ -158,10 +166,14 @@ with tab_results:
             col_pre, col_post = st.columns(2)
             with col_pre:
                 st.caption("Pre-calibration")
-                st.dataframe(pd.read_csv(cal_pre), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    pd.read_csv(cal_pre), use_container_width=True, hide_index=True
+                )
             with col_post:
                 st.caption("Post-calibration")
-                st.dataframe(pd.read_csv(cal_post), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    pd.read_csv(cal_post), use_container_width=True, hide_index=True
+                )
 
         # ── Saved plots ──
         for img_name, title in [
@@ -199,18 +211,32 @@ with tab_review:
 
         with col_a:
             st.subheader("Predicted vs Actual CLV")
-            df_rev["sharp"] = np.where(df_rev["odds_after_10"] < -0.01, "Sharp (< -0.01)", "Not sharp")
+            df_rev["sharp"] = np.where(
+                df_rev["odds_after_10"] < -0.01, "Sharp (< -0.01)", "Not sharp"
+            )
             fig_scatter = px.scatter(
                 df_rev,
                 x="predicted_clv",
                 y="odds_after_10",
                 color="sharp",
-                color_discrete_map={"Sharp (< -0.01)": "crimson", "Not sharp": "steelblue"},
+                color_discrete_map={
+                    "Sharp (< -0.01)": "crimson",
+                    "Not sharp": "steelblue",
+                },
                 hover_data=["sport", "market_name", "stake", "ticket_state"],
                 opacity=0.7,
             )
-            fig_scatter.add_shape(type="line", x0=-0.3, x1=0.3, y0=-0.3, y1=0.3, line=dict(color="gray", dash="dash"))
-            fig_scatter.add_hline(y=-0.01, line_dash="dot", line_color="crimson", opacity=0.5)
+            fig_scatter.add_shape(
+                type="line",
+                x0=-0.3,
+                x1=0.3,
+                y0=-0.3,
+                y1=0.3,
+                line=dict(color="gray", dash="dash"),
+            )
+            fig_scatter.add_hline(
+                y=-0.01, line_dash="dot", line_color="crimson", opacity=0.5
+            )
             fig_scatter.update_layout(height=450)
             st.plotly_chart(fig_scatter, use_container_width=True)
 
@@ -221,11 +247,16 @@ with tab_review:
                 x="odds_after_10",
                 color="sharp",
                 nbins=25,
-                color_discrete_map={"Sharp (< -0.01)": "crimson", "Not sharp": "steelblue"},
+                color_discrete_map={
+                    "Sharp (< -0.01)": "crimson",
+                    "Not sharp": "steelblue",
+                },
                 barmode="overlay",
                 opacity=0.7,
             )
-            fig_hist.add_vline(x=-0.01, line_dash="dot", line_color="crimson", opacity=0.5)
+            fig_hist.add_vline(
+                x=-0.01, line_dash="dot", line_color="crimson", opacity=0.5
+            )
             fig_hist.update_layout(height=450)
             st.plotly_chart(fig_hist, use_container_width=True)
 
@@ -289,7 +320,9 @@ with tab_review:
                 opacity=0.7,
                 hover_data=["sport", "market_name", "ticket_state"],
             )
-            fig_stake.add_hline(y=-0.01, line_dash="dot", line_color="crimson", opacity=0.5)
+            fig_stake.add_hline(
+                y=-0.01, line_dash="dot", line_color="crimson", opacity=0.5
+            )
             fig_stake.update_layout(height=400)
             st.plotly_chart(fig_stake, use_container_width=True)
 
@@ -300,12 +333,19 @@ with tab_review:
                 x="bs_avg_odds_after_10",
                 y="odds_after_10",
                 color="sharp",
-                color_discrete_map={"Sharp (< -0.01)": "crimson", "Not sharp": "steelblue"},
+                color_discrete_map={
+                    "Sharp (< -0.01)": "crimson",
+                    "Not sharp": "steelblue",
+                },
                 hover_data=["sport", "bettor_id", "stake"],
                 opacity=0.7,
             )
-            fig_hist_clv.add_hline(y=-0.01, line_dash="dot", line_color="crimson", opacity=0.5)
-            fig_hist_clv.add_vline(x=T.higher, line_dash="dot", line_color="orange", opacity=0.5)
+            fig_hist_clv.add_hline(
+                y=-0.01, line_dash="dot", line_color="crimson", opacity=0.5
+            )
+            fig_hist_clv.add_vline(
+                x=T.higher, line_dash="dot", line_color="orange", opacity=0.5
+            )
             fig_hist_clv.update_layout(height=400)
             st.plotly_chart(fig_hist_clv, use_container_width=True)
 
@@ -326,10 +366,14 @@ with tab_review:
         ]
         available = [c for c in show_cols if c in df_rev.columns]
 
-        sort_col = st.selectbox("Sort by", available, index=available.index("predicted_clv"))
+        sort_col = st.selectbox(
+            "Sort by", available, index=available.index("predicted_clv")
+        )
         ascending = st.checkbox("Ascending", value=True)
         st.dataframe(
-            df_rev[available].sort_values(sort_col, ascending=ascending).reset_index(drop=True),
+            df_rev[available]
+            .sort_values(sort_col, ascending=ascending)
+            .reset_index(drop=True),
             use_container_width=True,
             hide_index=True,
             height=500,
@@ -355,7 +399,9 @@ with tab_data:
         reject_reasons = get_distinct_values("reject_reason")
         reject_reason = fc3.selectbox("Reject Reason", ["all"] + reject_reasons)
         min_stake = fc4.number_input("Min Stake", value=0.0, step=1.0)
-        max_rows = fc5.number_input("Max Rows", value=5000, min_value=100, max_value=100000, step=1000)
+        max_rows = fc5.number_input(
+            "Max Rows", value=5000, min_value=100, max_value=100000, step=1000
+        )
 
     where = []
     if state != "all":
@@ -389,7 +435,8 @@ with tab_data:
 with tab_analytics:
     st.header("Analytics")
 
-    overview = con.sql("""
+    overview = (
+        con.sql("""
         SELECT
             COUNT(*) AS n,
             COUNT(DISTINCT bettor_id) AS n_bettors,
@@ -404,7 +451,10 @@ with tab_analytics:
             SUM(stake) AS total_stake,
             SUM(pnl) AS total_pnl
         FROM tickets
-    """).df().iloc[0]
+    """)
+        .df()
+        .iloc[0]
+    )
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Tickets", f"{overview['n']:,.0f}")
@@ -424,7 +474,9 @@ with tab_analytics:
                    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
             FROM tickets GROUP BY ticket_state ORDER BY n DESC
         """).df()
-        fig_states = px.bar(state_df, x="ticket_state", y="n", text="pct", color="ticket_state")
+        fig_states = px.bar(
+            state_df, x="ticket_state", y="n", text="pct", color="ticket_state"
+        )
         fig_states.update_layout(showlegend=False, height=350)
         st.plotly_chart(fig_states, use_container_width=True)
 
@@ -437,7 +489,9 @@ with tab_analytics:
             GROUP BY reject_reason ORDER BY n DESC
         """).df()
         if len(rej_df) > 0:
-            fig_rej = px.bar(rej_df, x="reject_reason", y="n", text="pct", color="reject_reason")
+            fig_rej = px.bar(
+                rej_df, x="reject_reason", y="n", text="pct", color="reject_reason"
+            )
             fig_rej.update_layout(showlegend=False, height=350)
             st.plotly_chart(fig_rej, use_container_width=True)
 
@@ -451,7 +505,9 @@ with tab_analytics:
     clv_m1, clv_m2, clv_m3, clv_m4 = st.columns(4)
     clv_m1.metric("Mean CLV", f"{overview['avg_clv']:.5f}")
     clv_m2.metric("Median CLV", f"{overview['med_clv']:.5f}")
-    clv_m3.metric("CLV Coverage", f"{overview['n_clv_nonnull']:,.0f} / {overview['n']:,.0f}")
+    clv_m3.metric(
+        "CLV Coverage", f"{overview['n_clv_nonnull']:,.0f} / {overview['n']:,.0f}"
+    )
     clv_m4.metric("Rejected", f"{overview['n_rejected']:,.0f}")
 
     tier_df = con.sql(f"""
@@ -511,7 +567,9 @@ with tab_analytics:
         or c == "n_reject_reasons"
     ]
     if agg_cols:
-        null_parts = ", ".join(f'ROUND(COUNT({c}) * 100.0 / COUNT(*), 1) AS "{c}"' for c in agg_cols)
+        null_parts = ", ".join(
+            f'ROUND(COUNT({c}) * 100.0 / COUNT(*), 1) AS "{c}"' for c in agg_cols
+        )
         coverage = con.sql(f"SELECT {null_parts} FROM tickets").df()
         coverage_t = coverage.T.reset_index()
         coverage_t.columns = ["feature", "coverage_pct"]
@@ -528,7 +586,9 @@ with tab_features:
     sample_size = st.sidebar.number_input(
         "Sample size", value=200_000, min_value=10_000, max_value=2_000_000, step=50_000
     )
-    fa_rounds = st.sidebar.number_input("LightGBM rounds", value=200, min_value=50, max_value=1000, step=50)
+    fa_rounds = st.sidebar.number_input(
+        "LightGBM rounds", value=200, min_value=50, max_value=1000, step=50
+    )
     run_perm = st.sidebar.checkbox("Run permutation importance", value=False)
 
     if st.sidebar.button("Run Feature Analysis", type="primary"):
@@ -567,9 +627,15 @@ with tab_features:
             if col in features.columns:
                 features[col] = features[col].fillna("__missing__").astype("category")
 
-        cat_indices = [features.columns.tolist().index(c) for c in cat_cols if c in features.columns]
+        cat_indices = [
+            features.columns.tolist().index(c)
+            for c in cat_cols
+            if c in features.columns
+        ]
 
-        dtrain = lgb.Dataset(features, label=target, categorical_feature=cat_indices, free_raw_data=False)
+        dtrain = lgb.Dataset(
+            features, label=target, categorical_feature=cat_indices, free_raw_data=False
+        )
 
         with st.spinner("Training quick LightGBM..."):
             booster = lgb.train(
@@ -628,8 +694,15 @@ with tab_features:
         st.subheader("Correlation with Target")
         numeric_cols = features.select_dtypes(include="number").columns.tolist()
         if numeric_cols:
-            corr = features[numeric_cols].corrwith(target).abs().sort_values(ascending=False)
-            corr_df = pd.DataFrame({"feature": corr.index, "abs_correlation": corr.values})
+            corr = (
+                features[numeric_cols]
+                .corrwith(target)
+                .abs()
+                .sort_values(ascending=False)
+            )
+            corr_df = pd.DataFrame(
+                {"feature": corr.index, "abs_correlation": corr.values}
+            )
             fig_corr = px.bar(
                 corr_df.head(25),
                 x="abs_correlation",
@@ -639,6 +712,44 @@ with tab_features:
             )
             fig_corr.update_layout(yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_corr, use_container_width=True)
+
+        # Feature correlation matrix
+        if numeric_cols and len(numeric_cols) > 1:
+            st.subheader("Feature Correlation Matrix")
+            corr_matrix = features[numeric_cols].corr()
+            fig_corr_matrix = px.imshow(
+                corr_matrix,
+                text_auto=".2f",
+                aspect="auto",
+                color_continuous_scale="RdBu_r",
+                zmin=-1,
+                zmax=1,
+                height=max(500, len(numeric_cols) * 28),
+            )
+            fig_corr_matrix.update_layout(margin=dict(l=10, r=10, t=30, b=10))
+            st.plotly_chart(fig_corr_matrix, use_container_width=True)
+
+            # Highly correlated pairs
+            pairs = []
+            for i, c1 in enumerate(numeric_cols):
+                for c2 in numeric_cols[i + 1 :]:
+                    r = corr_matrix.loc[c1, c2]
+                    if abs(r) > 0.8:
+                        pairs.append(
+                            {
+                                "feature_1": c1,
+                                "feature_2": c2,
+                                "correlation": round(r, 3),
+                            }
+                        )
+            if pairs:
+                st.caption(
+                    "Highly correlated pairs (|r| > 0.8) — candidates for dropping one of each pair"
+                )
+                pairs_df = pd.DataFrame(pairs).sort_values(
+                    "correlation", key=abs, ascending=False
+                )
+                st.dataframe(pairs_df, use_container_width=True, hide_index=True)
 
         # Permutation importance
         if run_perm:
@@ -675,7 +786,9 @@ with tab_features:
         st.subheader("Feature Selection")
         zero_gain = set(imp_df[imp_df["gain"] == 0]["feature"].tolist())
         default_sel = [f for f in imp_df["feature"].tolist() if f not in zero_gain]
-        selected = st.multiselect("Features to use", options=imp_df["feature"].tolist(), default=default_sel)
+        selected = st.multiselect(
+            "Features to use", options=imp_df["feature"].tolist(), default=default_sel
+        )
         if selected:
             st.code(f"features = {selected}", language="python")
             st.caption(f"{len(selected)} features selected")
