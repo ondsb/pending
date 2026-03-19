@@ -11,12 +11,7 @@ import streamlit as st
 
 from pending_delay.config import settings
 from pending_delay.features.engineering import engineer_features
-from pending_delay.schema import (
-    TARGET_COL,
-    LEAKED_COLUMNS,
-    DROP_METADATA,
-    CATEGORICAL_FEATURES,
-)
+from pending_delay.schema import TARGET_COL, CATEGORICAL_FEATURES
 
 st.set_page_config(page_title="Pending Delay", layout="wide")
 
@@ -579,9 +574,86 @@ with tab_analytics:
 # =============================================================================
 # TAB 5: Feature Analysis
 # =============================================================================
+ALL_FEATURES = {
+    "Aggregate bettor-level": [
+        "bs_avg_odds_after_10",
+        "avg_rejected_odds_after_10",
+        "bs_avg_odds_after_30",
+        "avg_rejected_odds_after_30",
+        "bs_avg_odds_after_90",
+        "avg_rejected_odds_after_90",
+        "bs_stake",
+        "bs_pnl",
+        "bs_margin",
+        "bs_rejected_stake",
+        "bs_rejected_pnl",
+        "total_rejected_stake",
+        "total_rejected_pnl",
+        "risk_tier_total_pnl",
+        "risk_tier_avg_margin",
+        "risk_tier_total_volume",
+        "mean_stake_size",
+        "n_reject_reasons",
+        "dominant_risk_tier",
+    ],
+    "Ticket-level": [
+        "selection_odds",
+        "stake",
+        "pending_delay",
+        "market_name",
+        "market_selection",
+        "sport",
+        "sport_id",
+        "tournament_id",
+        "client_id",
+        "ots_risk_tier_id",
+        "market_type_id",
+        "bos",
+    ],
+    "Engineered": [
+        "stake_ratio",
+        "odds_bucket",
+    ],
+}
+BASE_MODEL_DEFAULTS = {
+    "selection_odds",
+    "stake",
+    "market_type_id",
+    "sport",
+    "client_id",
+    "pending_delay",
+    "market_selection",
+    "stake_ratio",
+    "odds_bucket",
+}
+
 with tab_features:
     st.header("Feature Analysis")
 
+    # ── Feature selector (batched in a form to avoid reruns on every click) ──
+    st.subheader("Feature Selection")
+    with st.form("feature_selection"):
+        fa_cols = st.columns(3)
+        for col_idx, (group_name, group_features) in enumerate(
+            ALL_FEATURES.items()
+        ):
+            with fa_cols[col_idx]:
+                st.caption(group_name)
+                for feat in group_features:
+                    st.checkbox(feat, value=(feat in BASE_MODEL_DEFAULTS), key=f"fa_{feat}")
+        st.form_submit_button("Confirm selection")
+
+    selected_features = [
+        f
+        for group in ALL_FEATURES.values()
+        for f in group
+        if st.session_state.get(f"fa_{f}", False)
+    ]
+    st.caption(f"{len(selected_features)} features selected")
+
+    st.divider()
+
+    # ── Sidebar controls ──
     st.sidebar.header("Feature Analysis Settings")
     sample_size = st.sidebar.number_input(
         "Sample size", value=200_000, min_value=10_000, max_value=2_000_000, step=50_000
@@ -594,210 +666,212 @@ with tab_features:
     if st.sidebar.button("Run Feature Analysis", type="primary"):
         import lightgbm as lgb
 
-        excluded = set(LEAKED_COLUMNS + DROP_METADATA + [TARGET_COL])
+        if not selected_features:
+            st.warning("No features selected. Check at least one feature above.")
+        else:
+            # Build WHERE clause from pre-training filter rules (same as train.py)
+            filter_clauses = [f"{TARGET_COL} IS NOT NULL"]
+            for rule in settings.filter.rules:
+                val = f"'{rule.value}'" if isinstance(rule.value, str) else rule.value
+                filter_clauses.append(f"{rule.column} {rule.op} {val}")
+            fa_where = " AND ".join(filter_clauses)
 
-        # Build WHERE clause from pre-training filter rules (same as train.py)
-        filter_clauses = [f"{TARGET_COL} IS NOT NULL"]
-        for rule in settings.filter.rules:
-            val = f"'{rule.value}'" if isinstance(rule.value, str) else rule.value
-            filter_clauses.append(f"{rule.column} {rule.op} {val}")
-        fa_where = " AND ".join(filter_clauses)
+            with st.spinner(f"Sampling {sample_size:,} rows..."):
+                df_fa = con.sql(f"""
+                    SELECT * FROM tickets
+                    WHERE {fa_where}
+                    USING SAMPLE {sample_size}
+                """).df()
+            st.success(f"Loaded {len(df_fa):,} rows")
 
-        with st.spinner(f"Sampling {sample_size:,} rows..."):
-            df_fa = con.sql(f"""
-                SELECT * FROM tickets
-                WHERE {fa_where}
-                USING SAMPLE {sample_size}
-            """).df()
-        st.success(f"Loaded {len(df_fa):,} rows")
+            df_fa = engineer_features(df_fa)
 
-        df_fa = engineer_features(df_fa)
+            target = df_fa[TARGET_COL]
+            candidates = [c for c in selected_features if c in df_fa.columns]
 
-        target = df_fa[TARGET_COL]
-        candidates = [c for c in df_fa.columns if c not in excluded]
-
-        # Null rates
-        st.subheader("Feature Coverage")
-        null_df = pd.DataFrame(
-            {
-                "feature": candidates,
-                "non_null_pct": [df_fa[c].notna().mean() * 100 for c in candidates],
-                "dtype": [str(df_fa[c].dtype) for c in candidates],
-            }
-        ).sort_values("non_null_pct", ascending=False)
-        st.dataframe(null_df, use_container_width=True, hide_index=True)
-
-        # Prepare for LightGBM
-        features = df_fa[candidates].copy()
-        cat_cols = set(CATEGORICAL_FEATURES)
-        for col in cat_cols:
-            if col in features.columns:
-                features[col] = features[col].fillna("__missing__").astype("category")
-
-        cat_indices = [
-            features.columns.tolist().index(c)
-            for c in cat_cols
-            if c in features.columns
-        ]
-
-        dtrain = lgb.Dataset(
-            features, label=target, categorical_feature=cat_indices, free_raw_data=False
-        )
-
-        with st.spinner("Training quick LightGBM..."):
-            booster = lgb.train(
+            # Null rates
+            st.subheader("Feature Coverage")
+            null_df = pd.DataFrame(
                 {
-                    "objective": "huber",
-                    "metric": "mae",
-                    "num_leaves": 63,
-                    "learning_rate": 0.05,
-                    "feature_fraction": 0.8,
-                    "bagging_fraction": 0.8,
-                    "bagging_freq": 5,
-                    "min_child_samples": 100,
-                    "verbose": -1,
-                },
-                dtrain,
-                num_boost_round=fa_rounds,
-            )
-
-        gain = dict(
-            zip(
-                features.columns,
-                booster.feature_importance(importance_type="gain").tolist(),
-            )
-        )
-        split = dict(
-            zip(
-                features.columns,
-                booster.feature_importance(importance_type="split").tolist(),
-            )
-        )
-
-        imp_df = pd.DataFrame(
-            {
-                "feature": list(gain.keys()),
-                "gain": list(gain.values()),
-                "split_count": list(split.values()),
-            }
-        ).sort_values("gain", ascending=False)
-        imp_df["gain_pct"] = imp_df["gain"] / imp_df["gain"].sum() * 100
-        imp_df["cumulative_gain_pct"] = imp_df["gain_pct"].cumsum()
-
-        st.subheader("Feature Importance (Gain)")
-        fig_gain = px.bar(
-            imp_df.head(25),
-            x="gain_pct",
-            y="feature",
-            orientation="h",
-            height=500,
-            labels={"gain_pct": "Gain %"},
-        )
-        fig_gain.update_layout(yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig_gain, use_container_width=True)
-        st.dataframe(imp_df, use_container_width=True, hide_index=True)
-
-        # Correlation
-        st.subheader("Correlation with Target")
-        numeric_cols = features.select_dtypes(include="number").columns.tolist()
-        if numeric_cols:
-            corr = (
-                features[numeric_cols]
-                .corrwith(target)
-                .abs()
-                .sort_values(ascending=False)
-            )
-            corr_df = pd.DataFrame(
-                {"feature": corr.index, "abs_correlation": corr.values}
-            )
-            fig_corr = px.bar(
-                corr_df.head(25),
-                x="abs_correlation",
-                y="feature",
-                orientation="h",
-                height=500,
-            )
-            fig_corr.update_layout(yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_corr, use_container_width=True)
-
-        # Feature correlation matrix
-        if numeric_cols and len(numeric_cols) > 1:
-            st.subheader("Feature Correlation Matrix")
-            corr_matrix = features[numeric_cols].corr()
-            fig_corr_matrix = px.imshow(
-                corr_matrix,
-                text_auto=".2f",
-                aspect="auto",
-                color_continuous_scale="RdBu_r",
-                zmin=-1,
-                zmax=1,
-                height=max(500, len(numeric_cols) * 28),
-            )
-            fig_corr_matrix.update_layout(margin=dict(l=10, r=10, t=30, b=10))
-            st.plotly_chart(fig_corr_matrix, use_container_width=True)
-
-            # Highly correlated pairs
-            pairs = []
-            for i, c1 in enumerate(numeric_cols):
-                for c2 in numeric_cols[i + 1 :]:
-                    r = corr_matrix.loc[c1, c2]
-                    if abs(r) > 0.8:
-                        pairs.append(
-                            {
-                                "feature_1": c1,
-                                "feature_2": c2,
-                                "correlation": round(r, 3),
-                            }
-                        )
-            if pairs:
-                st.caption(
-                    "Highly correlated pairs (|r| > 0.8) — candidates for dropping one of each pair"
-                )
-                pairs_df = pd.DataFrame(pairs).sort_values(
-                    "correlation", key=abs, ascending=False
-                )
-                st.dataframe(pairs_df, use_container_width=True, hide_index=True)
-
-        # Permutation importance
-        if run_perm:
-            st.subheader("Permutation Importance")
-            with st.spinner("Computing..."):
-                baseline_preds = booster.predict(features)
-                baseline_mae = np.mean(np.abs(baseline_preds - target))
-                perm_results = {}
-                for col in features.columns:
-                    original = features[col].values.copy()
-                    features[col] = np.random.permutation(original)
-                    perm_mae = np.mean(np.abs(booster.predict(features) - target))
-                    perm_results[col] = perm_mae - baseline_mae
-                    features[col] = original
-
-            perm_df = pd.DataFrame(
-                {
-                    "feature": list(perm_results.keys()),
-                    "mae_increase": list(perm_results.values()),
+                    "feature": candidates,
+                    "non_null_pct": [df_fa[c].notna().mean() * 100 for c in candidates],
+                    "dtype": [str(df_fa[c].dtype) for c in candidates],
                 }
-            ).sort_values("mae_increase", ascending=False)
-            fig_perm = px.bar(
-                perm_df.head(25),
-                x="mae_increase",
+            ).sort_values("non_null_pct", ascending=False)
+            st.dataframe(null_df, use_container_width=True, hide_index=True)
+
+            # Prepare for LightGBM
+            features = df_fa[candidates].copy()
+            cat_cols = set(CATEGORICAL_FEATURES)
+            for col in cat_cols:
+                if col in features.columns:
+                    features[col] = (
+                        features[col].fillna("__missing__").astype("category")
+                    )
+
+            cat_indices = [
+                features.columns.tolist().index(c)
+                for c in cat_cols
+                if c in features.columns
+            ]
+
+            dtrain = lgb.Dataset(
+                features,
+                label=target,
+                categorical_feature=cat_indices,
+                free_raw_data=False,
+            )
+
+            with st.spinner("Training quick LightGBM..."):
+                booster = lgb.train(
+                    {
+                        "objective": "huber",
+                        "metric": "mae",
+                        "num_leaves": 63,
+                        "learning_rate": 0.05,
+                        "feature_fraction": 0.8,
+                        "bagging_fraction": 0.8,
+                        "bagging_freq": 5,
+                        "min_child_samples": 100,
+                        "verbose": -1,
+                    },
+                    dtrain,
+                    num_boost_round=fa_rounds,
+                )
+
+            gain = dict(
+                zip(
+                    features.columns,
+                    booster.feature_importance(importance_type="gain").tolist(),
+                )
+            )
+            split = dict(
+                zip(
+                    features.columns,
+                    booster.feature_importance(importance_type="split").tolist(),
+                )
+            )
+
+            imp_df = pd.DataFrame(
+                {
+                    "feature": list(gain.keys()),
+                    "gain": list(gain.values()),
+                    "split_count": list(split.values()),
+                }
+            ).sort_values("gain", ascending=False)
+            imp_df["gain_pct"] = imp_df["gain"] / imp_df["gain"].sum() * 100
+            imp_df["cumulative_gain_pct"] = imp_df["gain_pct"].cumsum()
+
+            st.subheader("Feature Importance (Gain)")
+            fig_gain = px.bar(
+                imp_df.head(25),
+                x="gain_pct",
                 y="feature",
                 orientation="h",
                 height=500,
+                labels={"gain_pct": "Gain %"},
             )
-            fig_perm.update_layout(yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_perm, use_container_width=True)
+            fig_gain.update_layout(yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_gain, use_container_width=True)
+            st.dataframe(imp_df, use_container_width=True, hide_index=True)
 
-        # Feature selection helper
-        st.divider()
-        st.subheader("Feature Selection")
-        zero_gain = set(imp_df[imp_df["gain"] == 0]["feature"].tolist())
-        default_sel = [f for f in imp_df["feature"].tolist() if f not in zero_gain]
-        selected = st.multiselect(
-            "Features to use", options=imp_df["feature"].tolist(), default=default_sel
-        )
-        if selected:
-            st.code(f"features = {selected}", language="python")
-            st.caption(f"{len(selected)} features selected")
+            # Correlation with target
+            st.subheader("Correlation with Target")
+            numeric_cols = features.select_dtypes(include="number").columns.tolist()
+            if numeric_cols:
+                corr = (
+                    features[numeric_cols]
+                    .corrwith(target)
+                    .abs()
+                    .sort_values(ascending=False)
+                )
+                corr_df = pd.DataFrame(
+                    {"feature": corr.index, "abs_correlation": corr.values}
+                )
+                fig_corr = px.bar(
+                    corr_df.head(25),
+                    x="abs_correlation",
+                    y="feature",
+                    orientation="h",
+                    height=500,
+                )
+                fig_corr.update_layout(yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig_corr, use_container_width=True)
+
+            # Feature correlation matrix
+            if numeric_cols and len(numeric_cols) > 1:
+                st.subheader("Feature Correlation Matrix")
+                corr_matrix = features[numeric_cols].corr()
+                fig_corr_matrix = px.imshow(
+                    corr_matrix,
+                    text_auto=".2f",
+                    aspect="auto",
+                    color_continuous_scale="RdBu_r",
+                    zmin=-1,
+                    zmax=1,
+                    height=max(500, len(numeric_cols) * 28),
+                )
+                fig_corr_matrix.update_layout(margin=dict(l=10, r=10, t=30, b=10))
+                st.plotly_chart(fig_corr_matrix, use_container_width=True)
+
+                # Highly correlated pairs
+                pairs = []
+                for i, c1 in enumerate(numeric_cols):
+                    for c2 in numeric_cols[i + 1 :]:
+                        r = corr_matrix.loc[c1, c2]
+                        if abs(r) > 0.8:
+                            pairs.append(
+                                {
+                                    "feature_1": c1,
+                                    "feature_2": c2,
+                                    "correlation": round(r, 3),
+                                }
+                            )
+                if pairs:
+                    st.caption(
+                        "Highly correlated pairs (|r| > 0.8) — candidates for dropping one of each pair"
+                    )
+                    pairs_df = pd.DataFrame(pairs).sort_values(
+                        "correlation", key=abs, ascending=False
+                    )
+                    st.dataframe(pairs_df, use_container_width=True, hide_index=True)
+
+            # Permutation importance
+            if run_perm:
+                st.subheader("Permutation Importance")
+                with st.spinner("Computing..."):
+                    baseline_preds = booster.predict(features)
+                    baseline_mae = np.mean(np.abs(baseline_preds - target))
+                    perm_results = {}
+                    for col in features.columns:
+                        original = features[col].values.copy()
+                        features[col] = np.random.permutation(original)
+                        perm_mae = np.mean(np.abs(booster.predict(features) - target))
+                        perm_results[col] = perm_mae - baseline_mae
+                        features[col] = original
+
+                perm_df = pd.DataFrame(
+                    {
+                        "feature": list(perm_results.keys()),
+                        "mae_increase": list(perm_results.values()),
+                    }
+                ).sort_values("mae_increase", ascending=False)
+                fig_perm = px.bar(
+                    perm_df.head(25),
+                    x="mae_increase",
+                    y="feature",
+                    orientation="h",
+                    height=500,
+                )
+                fig_perm.update_layout(yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig_perm, use_container_width=True)
+
+            # Copyable feature list at the bottom
+            st.divider()
+            st.subheader("Copy Feature List")
+            st.code(f"features = {candidates}", language="python")
+            st.caption(f"{len(candidates)} features selected")
     else:
-        st.info("Click **Run Feature Analysis** in the sidebar to start.")
+        st.info(
+            "Select features above and click **Run Feature Analysis** in the sidebar."
+        )
